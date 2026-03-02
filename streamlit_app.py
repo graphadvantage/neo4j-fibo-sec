@@ -10,6 +10,7 @@ Run with:
 """
 
 import json
+from urllib.parse import quote as _url_quote
 import streamlit as st
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
@@ -287,11 +288,14 @@ def load_governs_subgraph(fibo_label: str, min_score: float):
         eid = r.element_id
         if eid in seen_rels:
             return
+        props = _clean(dict(r.items()))
         seen_rels[eid] = {
-            "id":       eid,
-            "from":     r.start_node.element_id,
-            "to":       r.end_node.element_id,
-            "captions": [{"value": r.type}],
+            "id":         eid,
+            "from":       r.start_node.element_id,
+            "to":         r.end_node.element_id,
+            "captions":   [{"value": r.type}],
+            "type":       r.type,
+            "properties": props,
         }
 
     with _session() as s:
@@ -313,37 +317,52 @@ def load_governs_subgraph(fibo_label: str, min_score: float):
                 _add_node(rec["gp"])
                 _add_rel(rec["r2"])
 
-        # Top-20 sections + GOVERNS + Part hierarchy + associated Text text
+        # Top-20 paragraphs (by score): traverse full Paragraph DAG depth.
+        # Variable-length HAS_PARA*1.. finds governing paragraphs at any nesting
+        # level; para_path captures every intermediate node + rel so the full
+        # DAG structure is visible in the graph.
         for rec in s.run(
             """
-            MATCH (sec:Section)-[r:GOVERNS {method:'vector_rollup'}]->(f:FIBO:Class {prefLabel: $label})
+            MATCH (sec:Section)-[rht:HAS_TEXT]->(t:Text)-[:HAS_PARA*1..5]->(p:Paragraph)
+                  -[r:GOVERNS]->(f:FIBO:Class {prefLabel: $label})
             WHERE r.similarity_score >= $min_score
             MATCH (sec)-[rb:BROADER]->(part:Part)
-            OPTIONAL MATCH (sec)-[:HAS_TEXT]->(t:Text)
-            RETURN sec, r, f, part, rb, t.text AS sec_text
+            WITH sec, rht, t, p, r, f, part, rb
             ORDER BY r.similarity_score DESC LIMIT 20
+            MATCH para_path = (t)-[:HAS_PARA*1..5]->(p)
+            RETURN sec, rht, t, para_path, p, r, f, part, rb
             """,
             label=fibo_label,
             min_score=min_score,
         ):
             _add_node(rec["part"])
-            # Inject the Text node's text into the Section node properties
-            # so the sidebar can display it directly.
+            # Inject Text node's text into Section properties for the sidebar.
             sec = rec["sec"]
+            t   = rec["t"]
             if sec is not None:
                 eid = sec.element_id
                 if eid not in seen_nodes:
                     lbl   = list(sec.labels)
                     props = _clean(dict(sec.items()))
-                    if rec["sec_text"]:
-                        props["text"] = rec["sec_text"]
+                    if t is not None:
+                        sec_text = dict(t.items()).get("text")
+                        if sec_text:
+                            props["text"] = sec_text
                     seen_nodes[eid] = {
                         "id":       eid,
                         "color":    _color(lbl),
                         "captions": [{"value": _caption(lbl, props, eid), "labels": lbl}],
                         "properties": props,
                     }
+            _add_node(rec["t"])
+            # Walk the paragraph DAG path — adds every intermediate Paragraph
+            # node and HAS_PARA relationship at any depth, not just one hop.
+            for node in rec["para_path"].nodes:
+                _add_node(node)
+            for rel in rec["para_path"].relationships:
+                _add_rel(rel)
             _add_node(rec["f"])
+            _add_rel(rec["rht"])
             _add_rel(rec["r"])
             _add_rel(rec["rb"])
 
@@ -570,9 +589,9 @@ try {{
   const NODES = {nodes_json};
   const RELS  = {rels_json};
 
-  // Node lookup by id — NVL click events may not preserve custom fields
-  // (properties, captions.labels), so we resolve them from this map.
+  // Lookup maps — NVL click events may not preserve custom fields.
   const NODE_MAP = Object.fromEntries(NODES.map(n => [n.id, n]));
+  const REL_MAP  = Object.fromEntries(RELS.map(r  => [r.id, r]));
 
   const graphEl  = document.getElementById('graph-el');
   const detailEl = document.getElementById('detail');
@@ -581,22 +600,25 @@ try {{
   const textEl   = document.getElementById('d-text');
   const propsEl  = document.getElementById('d-props');
 
-  const SKIP = new Set(['labelVector', 'embedding']);
+  // Properties never shown in the sidebar
+  const SKIP = new Set(['labelVector', 'textVector', 'embedding']);
 
   // ── Hoist nvl ref ─────────────────────────────────────────────────────────
   let nvl = null;
 
-  // Toggle selection: deselectAll() clears every node, then updateElementsInGraph
-  // patches only the `selected` flag on the target node (other properties unchanged).
-  function setSelected(clickedId) {{
+  function setSelected(nodeId) {{
     if (!nvl) return;
     nvl.deselectAll();
-    if (clickedId) {{
-      nvl.updateElementsInGraph([{{ id: clickedId, selected: true }}], []);
-    }}
+    if (nodeId) nvl.updateElementsInGraph([{{ id: nodeId, selected: true }}], []);
   }}
 
-  // ── Node type label (mirrors TSX Drawer.Header) ───────────────────────────
+  function setRelSelected(relId) {{
+    if (!nvl) return;
+    nvl.deselectAll();
+    if (relId) nvl.updateElementsInGraph([], [{{ id: relId, selected: true }}]);
+  }}
+
+  // ── Node type label ────────────────────────────────────────────────────────
   function nodeTypeLabel(labels) {{
     if (labels.includes('Section'))   return 'CFR Section';
     if (labels.includes('Part'))      return 'CFR Part';
@@ -607,17 +629,35 @@ try {{
     return 'Node';
   }}
 
-  // ── Show node in left panel (mirrors TSX handleExpand + Drawer.Body) ──────
+  // ── Render key/value row in #d-props ──────────────────────────────────────
+  function addProp(key, val) {{
+    if (val == null || val === '') return;
+    const d = document.createElement('div');
+    d.innerHTML =
+      `<div class="prop-k">${{key}}</div>`+
+      `<div class="prop-v">${{String(val).slice(0, 400)}}</div>`;
+    propsEl.appendChild(d);
+  }}
+
+  // ── Show node in left panel ────────────────────────────────────────────────
   function showNode(node) {{
     const p      = node.properties || {{}};
     const labels = node.captions?.[0]?.labels ?? [];
+    const isTextOrPara = labels.includes('Text') || labels.includes('Paragraph');
 
-    // Header — node type + full name
     badgeEl.textContent = nodeTypeLabel(labels);
-    nameEl.textContent  = p.prefLabel || p.notation
-                          || node.captions?.[0]?.value || node.id;
 
-    // Body — text content (regulatory text or FIBO definition)
+    if (isTextOrPara) {{
+      // Header: depth + marker for Text / Paragraph nodes
+      const depth  = p.depth  != null ? `depth ${{p.depth}}` : '';
+      const marker = p.marker ? `  ${{p.marker}}` : '';
+      nameEl.textContent = (depth + marker).trim() || node.id;
+    }} else {{
+      nameEl.textContent = p.prefLabel || p.notation
+                           || node.captions?.[0]?.value || node.id;
+    }}
+
+    // Body text
     const body = p.text || p.definition || p.description || null;
     if (body) {{
       textEl.textContent   = body;
@@ -626,20 +666,41 @@ try {{
       textEl.style.display = 'none';
     }}
 
-    // Extra properties (notation, score, etc.)
-    const SHOWN = new Set(['prefLabel', 'text', 'definition', 'description', 'notation']);
+    // Properties
     propsEl.innerHTML = '';
-    for (const [k, v] of Object.entries(p)) {{
-      if (SKIP.has(k) || SHOWN.has(k) || v == null || v === '') continue;
-      const d = document.createElement('div');
-      d.innerHTML =
-        `<div class="prop-k">${{k}}</div>`+
-        `<div class="prop-v">${{String(v).slice(0, 400)}}</div>`;
-      propsEl.appendChild(d);
+    if (isTextOrPara) {{
+      // Fixed ordered display for Text / Paragraph
+      addProp('uri',    p.uri);
+      addProp('depth',  p.depth);
+      addProp('marker', p.marker);
+    }} else {{
+      const SHOWN = new Set(['prefLabel','text','definition','description','notation']);
+      for (const [k, v] of Object.entries(p)) {{
+        if (SKIP.has(k) || SHOWN.has(k)) continue;
+        addProp(k, v);
+      }}
     }}
 
     detailEl.classList.add('open');
     setSelected(node.id);
+  }}
+
+  // ── Show relationship in left panel ───────────────────────────────────────
+  function showRel(rel) {{
+    const p = rel.properties || {{}};
+    badgeEl.textContent = 'Relationship';
+    nameEl.textContent  = rel.type || rel.captions?.[0]?.value || '—';
+
+    textEl.style.display = 'none';
+
+    propsEl.innerHTML = '';
+    for (const [k, v] of Object.entries(p)) {{
+      if (SKIP.has(k)) continue;
+      addProp(k, v);
+    }}
+
+    detailEl.classList.add('open');
+    setRelSelected(rel.id);
   }}
 
   document.getElementById('close-btn').addEventListener('click', () => {{
@@ -666,7 +727,8 @@ try {{
 
     // ClickInteraction wires click events; PanInteraction wires canvas drag.
     const ci = new ClickInteraction(nvl);
-    ci.updateCallback('onNodeClick',   (node, _h, _e) => showNode(NODE_MAP[node.id] || node));
+    ci.updateCallback('onNodeClick',         (node, _h, _e) => showNode(NODE_MAP[node.id] || node));
+    ci.updateCallback('onRelationshipClick', (rel,  _h, _e) => showRel(REL_MAP[rel.id]   || rel));
     ci.updateCallback('onCanvasClick', (_e) => {{
       nvl.deselectAll();
       detailEl.classList.remove('open');
@@ -905,17 +967,31 @@ with tab1:
         graph_open = st.session_state.get("show_graph", False)
         ico_color  = "#ef4444" if graph_open else "#00acee"
         btn_label  = "Hide Graph" if graph_open else "View Graph"
-        ic, bt = st.columns([0.08, 0.92])
-        with ic:
-            st.markdown(
-                f'<div style="margin-top:6px">{_graph_icon(22, ico_color)}</div>',
-                unsafe_allow_html=True,
-            )
-        with bt:
-            if st.button(btn_label, key="graph_btn",
-                         help="Toggle force-directed GOVERNS subgraph"):
-                st.session_state["show_graph"] = not graph_open
-                st.rerun()
+
+        # Embed the SVG icon inside the button via CSS ::before + data URI.
+        # div:has(#graph-btn-marker) + div targets the stButton wrapper that
+        # immediately follows the marker div in the same column container.
+        _encoded_svg = _url_quote(_graph_icon(16, ico_color).replace('"', "'"))
+        st.markdown(
+            f"""<style>
+            div:has(#graph-btn-marker) + div button {{
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 6px !important;
+            }}
+            div:has(#graph-btn-marker) + div button::before {{
+                content: url("data:image/svg+xml,{_encoded_svg}");
+                display: inline-flex;
+                align-items: center;
+                line-height: 0;
+            }}
+            </style><div id="graph-btn-marker"></div>""",
+            unsafe_allow_html=True,
+        )
+        if st.button(btn_label, key="graph_btn",
+                     help="Toggle force-directed GOVERNS subgraph"):
+            st.session_state["show_graph"] = not graph_open
+            st.rerun()
 
     # ── NVL force-directed graph (full-width, below columns) ──────────────────
     if st.session_state.get("show_graph", False):
@@ -1088,7 +1164,7 @@ with tab2:
         filtered_ug = ug_df if sel_mod == "All" else ug_df[ug_df["module"] == sel_mod]
         st.dataframe(
             filtered_ug[["module", "concept"]].reset_index(drop=True),
-            width='stretch',
+            use_container_width=True,
             height=300,
         )
 
@@ -1129,6 +1205,6 @@ with tab2:
         display_ul["notation"] = "§" + display_ul["notation"]
         st.dataframe(
             display_ul.reset_index(drop=True),
-            width='stretch',
+            use_container_width=True,
             height=300,
         )
