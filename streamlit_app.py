@@ -49,11 +49,11 @@ st.set_page_config(
 # ── Neo4j connection ───────────────────────────────────────────────────────────
 @st.cache_resource
 def get_driver():
-    return GraphDatabase.driver(
-        NEO4J_URI,
-        auth=(NEO4J_USER, NEO4J_PWD),
-        default_access_mode=READ_ACCESS,
-    )
+    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PWD))
+
+
+def _session():
+    return get_driver().session(database=NEO4J_DB, default_access_mode=READ_ACCESS)
 
 
 driver = get_driver()
@@ -66,7 +66,7 @@ def load_sankey_data(top_n_fibo: int, top_n_sections: int, min_score: float):
     Returns raw (part, section, fibo, fibo_parent) rows for the top N FIBO
     classes and top N sections connected to them.
     """
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
 
         # Top N FIBO classes by rollup GOVERNS count
         top_fibo = s.run(
@@ -125,7 +125,7 @@ def load_sankey_data(top_n_fibo: int, top_n_sections: int, min_score: float):
 @st.cache_data(ttl=300)
 def load_fibo_sections(fibo_label: str, min_score: float):
     """Sections linked to a FIBO class via rollup GOVERNS, with their Part."""
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         return s.run(
             """
             MATCH (sec:Section)-[r:GOVERNS {method:'vector_rollup'}]->(f:FIBO:Class)
@@ -148,7 +148,7 @@ def load_fibo_sections(fibo_label: str, min_score: float):
 @st.cache_data(ttl=300)
 def load_coverage_stats():
     """Summary counts for FIBO and SEC coverage."""
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         fibo = s.run("""
             MATCH (f:FIBO:Class)
             RETURN count(f) AS total,
@@ -165,7 +165,7 @@ def load_coverage_stats():
 @st.cache_data(ttl=300)
 def load_ungoverned_fibo():
     """FIBO classes with no incoming GOVERNS, grouped by immediate parent module."""
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         return s.run("""
             MATCH (f:FIBO:Class)
             WHERE NOT ()-[:GOVERNS]->(f)
@@ -180,7 +180,7 @@ def load_ungoverned_fibo():
 @st.cache_data(ttl=300)
 def load_unlinked_sections():
     """CFR Sections with no outgoing GOVERNS, grouped by Part."""
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         return s.run("""
             MATCH (sec:Section)
             WHERE NOT (sec)-[:GOVERNS]->()
@@ -196,7 +196,7 @@ def load_unlinked_sections():
 @st.cache_data(ttl=300)
 def load_section_paragraphs(notation: str, fibo_label: str):
     """Paragraphs in a section, with paragraph-level similarity score where available."""
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         return s.run(
             """
             MATCH (sec:Section)-[:HAS_TEXT]->(:Text)-[:HAS_PARA]->(p:Paragraph)
@@ -292,7 +292,7 @@ def load_governs_subgraph(fibo_label: str, min_score: float):
             "captions": [{"value": r.type}],
         }
 
-    with driver.session(database=NEO4J_DB) as s:
+    with _session() as s:
         # FIBO class + 2-level SUBCLASS_OF ancestors
         for rec in s.run(
             """
@@ -880,7 +880,7 @@ with tab1:
                 for s in sections
             ]
             # Fetch FIBO parent for the selected class
-            with driver.session(database=NEO4J_DB) as _s:
+            with _session() as _s:
                 fp = _s.run(
                     """
                     MATCH (f:FIBO:Class {prefLabel: $label})-[:SUBCLASS_OF]->(p:Class)
