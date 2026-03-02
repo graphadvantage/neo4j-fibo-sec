@@ -844,7 +844,7 @@ with tab1:
     sankey_fig = build_sankey(
         rows,
         title=f"CFR Part → Section → FIBO Class → FIBO Parent  "
-              f"(top {top_n_fibo} FIBO · top {top_n_sections} sections · min score {min_score:.2f})",
+              f"(top {top_n_fibo} FIBO · top {top_n_sections} CFR sections · min score {min_score:.2f})",
         height=700,
     )
     st.plotly_chart(sankey_fig, width='stretch')
