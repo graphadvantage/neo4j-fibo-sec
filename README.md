@@ -26,13 +26,13 @@ https://drive.google.com/file/d/13YUGAb8wt3PQoxHAAcf-bocHRXNegw4B/view?usp=drive
 **Installation**
 1. Create a virtualenv and install deps: `python -m venv .venv`, `source .venv/bin/activate`, `pip install -r requirements.txt`.
 2. Start Neo4j 5.x and load the graph by restoring `neo4j-2026-03-02T02-25-42.dump` or by running `sec_fibo_loader.ipynb` and applying `indexes.cyp`.
-If you want to run the complete build pipeline, you'll need to pdate the `.env` file with your keys. 
+If you want to run the complete build pipeline, you'll need to update the `.env` file with your keys. 
 3. Add Streamlit secrets in `.streamlit/secrets.toml`: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`.
 4. Run the app: `streamlit run streamlit_app.py`.
 
 **Governance Logic**
 - Each `FIBO:Class` has a label embedding (`labelVector`). SEC text/paragraph nodes have text embeddings and are indexed for ANN search.
-- For each FIBO class, the top-K SEC nodes are retrieved from the vector index; any with cosine similarity above `MIN_SCORE` get a `[:GOVERNS {similarity_score, method:'vector'}]` edge to the class.
+- For each FIBO class, the top-K SEC nodes are retrieved from the vector index; any with cosine similarity above `MIN_SCORE` get a `[:GOVERNS {similarity_score, method:'vector'}]` relationship to the class.
 - Optional rollup: for each `Section`, take the max similarity from its `Text` or `Paragraph` GOVERNS links and write `[:GOVERNS {similarity_score, method:'vector_rollup'}]` from the `Section` to the FIBO class.
 
 **Resources**
