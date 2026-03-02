@@ -847,7 +847,7 @@ with tab1:
               f"(top {top_n_fibo} FIBO · top {top_n_sections} sections · min score {min_score:.2f})",
         height=700,
     )
-    st.plotly_chart(sankey_fig, use_container_width=True)
+    st.plotly_chart(sankey_fig, width='stretch')
 
 
     # ── Drill-down ────────────────────────────────────────────────────────────────
@@ -897,7 +897,7 @@ with tab1:
                 title=selected_fibo,
                 height=300,
             )
-            st.plotly_chart(mini_fig, use_container_width=True)
+            st.plotly_chart(mini_fig, width='stretch')
 
         # Graph icon button — toggles the NVL force-directed graph
         graph_open = st.session_state.get("show_graph", False)
@@ -1020,7 +1020,7 @@ with tab2:
             margin      = dict(l=60, r=60, t=40, b=40),
             showlegend  = False,
         )
-        st.plotly_chart(fibo_donut, use_container_width=True)
+        st.plotly_chart(fibo_donut, width='stretch')
 
     with dc2:
         sec_donut = go.Figure(go.Pie(
@@ -1044,7 +1044,7 @@ with tab2:
             margin      = dict(l=60, r=60, t=40, b=40),
             showlegend  = False,
         )
-        st.plotly_chart(sec_donut, use_container_width=True)
+        st.plotly_chart(sec_donut, width='stretch')
 
     st.divider()
 
@@ -1078,7 +1078,7 @@ with tab2:
             xaxis_title="Ungoverned classes",
             yaxis=dict(tickfont=dict(size=10)),
         )
-        st.plotly_chart(bar_fig, use_container_width=True)
+        st.plotly_chart(bar_fig, width='stretch')
 
         # Filter + table
         modules = ["All"] + sorted(ug_df["module"].unique())
@@ -1086,7 +1086,7 @@ with tab2:
         filtered_ug = ug_df if sel_mod == "All" else ug_df[ug_df["module"] == sel_mod]
         st.dataframe(
             filtered_ug[["module", "concept"]].reset_index(drop=True),
-            use_container_width=True,
+            width='stretch',
             height=300,
         )
 
@@ -1117,7 +1117,7 @@ with tab2:
             xaxis_title="Unlinked sections",
             yaxis=dict(tickfont=dict(size=10)),
         )
-        st.plotly_chart(bar_fig2, use_container_width=True)
+        st.plotly_chart(bar_fig2, width='stretch')
 
         # Filter + table
         parts = ["All"] + sorted(ul_df["part_name"].unique())
@@ -1127,6 +1127,6 @@ with tab2:
         display_ul["notation"] = "§" + display_ul["notation"]
         st.dataframe(
             display_ul.reset_index(drop=True),
-            use_container_width=True,
+            width='stretch',
             height=300,
         )
