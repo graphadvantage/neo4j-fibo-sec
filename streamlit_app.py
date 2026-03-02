@@ -34,9 +34,9 @@ def _graph_icon(size: int = 22, color: str = "#00acee") -> str:
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-NEO4J_URI  = "neo4j+s://04238bb8.databases.neo4j.io"
-NEO4J_USER = "neo4j"
-NEO4J_PWD  = "pC6GvgDoLGVzrR0IPsto3WUrW7NP3hduDlqOrvFKDtg"
+NEO4J_URI  = st.secrets["NEO4J_URI"]
+NEO4J_USER = st.secrets["NEO4J_USER"]
+NEO4J_PWD  = st.secrets["NEO4J_PASSWORD"]
 NEO4J_DB   = "neo4j"
 
 st.set_page_config(

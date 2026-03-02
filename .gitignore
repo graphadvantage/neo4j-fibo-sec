@@ -4,6 +4,7 @@
 
 # Credentials
 .env
+.streamlit/secrets.toml
 
 # Jupyter
 .ipynb_checkpoints/
